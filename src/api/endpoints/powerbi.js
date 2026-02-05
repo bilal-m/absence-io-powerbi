@@ -9,43 +9,63 @@ const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // Simple in-memory cache (5-min TTL)
-let annualCache = {};
+let cache = {};
 const CACHE_TTL = 5 * 60 * 1000;
 
 /**
- * GET /api/powerbi/annual-summary?year=2025
- * Returns a flat JSON array of all users × 12 months for Power BI
+ * GET /api/powerbi/annual-summary?fromYear=2024&toYear=2025
+ * Also supports: ?year=2025 (single year)
+ * Returns a flat JSON array of all users × months for Power BI
  */
 async function getAnnualSummary(req, res) {
     try {
-        const year = parseInt(req.query.year) || new Date().getFullYear();
+        const currentYear = new Date().getFullYear();
+        let fromYear, toYear;
 
-        // Check cache
-        const cacheKey = `${year}`;
-        if (annualCache[cacheKey] && (Date.now() - annualCache[cacheKey].timestamp < CACHE_TTL)) {
-            return res.json(annualCache[cacheKey].data);
+        if (req.query.fromYear || req.query.toYear) {
+            fromYear = parseInt(req.query.fromYear) || currentYear;
+            toYear = parseInt(req.query.toYear) || currentYear;
+        } else {
+            const year = parseInt(req.query.year) || currentYear;
+            fromYear = year;
+            toYear = year;
         }
 
-        // Fetch all 12 months in parallel
+        // Clamp range to prevent abuse
+        if (toYear - fromYear > 5) {
+            return res.status(400).json({ error: 'Maximum range is 5 years' });
+        }
+
+        const cacheKey = `${fromYear}-${toYear}`;
+        if (cache[cacheKey] && (Date.now() - cache[cacheKey].timestamp < CACHE_TTL)) {
+            return res.json(cache[cacheKey].data);
+        }
+
+        // Fetch all months for all years in parallel
         const monthPromises = [];
-        for (let month = 1; month <= 12; month++) {
-            monthPromises.push(generateMonthlySummary(year, month));
+        for (let year = fromYear; year <= toYear; year++) {
+            for (let month = 1; month <= 12; month++) {
+                monthPromises.push({ year, month, promise: generateMonthlySummary(year, month) });
+            }
         }
-        const allMonths = await Promise.all(monthPromises);
 
-        // Flatten into a single array with Power BI-friendly format
+        const results = await Promise.all(monthPromises.map(m => m.promise));
+
+        // Flatten into a single array
         const rows = [];
-        for (let i = 0; i < 12; i++) {
-            for (const user of allMonths[i]) {
+        for (let idx = 0; idx < monthPromises.length; idx++) {
+            const { year, month } = monthPromises[idx];
+            for (const user of results[idx]) {
                 rows.push({
                     userId: user.userId,
                     fullName: user.fullName,
                     departmentName: user.departmentName,
                     locationName: user.locationName,
                     teamNames: (user.teamNames || []).join(', '),
-                    year: user.year,
-                    month: user.month,
-                    monthLabel: `${String(i + 1).padStart(2, '0')} - ${MONTH_NAMES[i]}`,
+                    year,
+                    month,
+                    monthLabel: `${MONTH_NAMES[month - 1]} ${year}`,
+                    monthSort: year * 100 + month,
                     weeklyHours: user.weeklyHours,
                     scheduledHours: user.scheduledHours,
                     workedHours: user.workedHours,
@@ -56,9 +76,7 @@ async function getAnnualSummary(req, res) {
             }
         }
 
-        // Cache result
-        annualCache[cacheKey] = { data: rows, timestamp: Date.now() };
-
+        cache[cacheKey] = { data: rows, timestamp: Date.now() };
         res.json(rows);
     } catch (error) {
         console.error('Error generating annual summary:', error.message);

@@ -24,12 +24,13 @@
 let
     BaseUrl = "https://YOUR-APP-NAME.onrender.com",
     ApiKey = "YOUR-API-KEY-HERE",
-    Year = Number.ToText(Date.Year(DateTime.LocalNow())),
+    FromYear = "2024",
+    ToYear = Number.ToText(Date.Year(DateTime.LocalNow())),
 
     Source = Json.Document(
         Web.Contents(
             BaseUrl & "/api/powerbi/annual-summary",
-            [Query = [year = Year, key = ApiKey]]
+            [Query = [fromYear = FromYear, toYear = ToYear, key = ApiKey]]
         )
     ),
 
@@ -37,7 +38,7 @@ let
 
     Expanded = Table.ExpandRecordColumn(ToTable, "Column1", {
         "userId", "fullName", "departmentName", "locationName", "teamNames",
-        "year", "month", "monthLabel", "weeklyHours",
+        "year", "month", "monthLabel", "monthSort", "weeklyHours",
         "scheduledHours", "workedHours", "overtimeHours", "absenceDays", "holidayCount"
     }),
 
@@ -50,15 +51,18 @@ let
         {"year", Int64.Type},
         {"month", Int64.Type},
         {"monthLabel", type text},
+        {"monthSort", Int64.Type},
         {"weeklyHours", type number},
         {"scheduledHours", type number},
         {"workedHours", type number},
         {"overtimeHours", type number},
         {"absenceDays", type number},
         {"holidayCount", Int64.Type}
-    })
+    }),
+
+    Sorted = Table.Sort(TypedTable, {{"monthSort", Order.Ascending}})
 in
-    TypedTable
+    Sorted
 
 
 // ============================================
