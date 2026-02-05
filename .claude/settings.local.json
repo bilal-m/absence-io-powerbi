@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(env:*)",
+      "Bash(python3:*)",
+      "Bash(__NEW_LINE_7746f5f80e0777bd__ echo \"\")",
+      "Bash(curl:*)",
+      "Bash(__NEW_LINE_a96149eff5ae75b1__ echo \"\")"
+    ]
+  }
+}

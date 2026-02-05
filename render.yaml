@@ -1,0 +1,14 @@
+# Render.com Deployment Configuration
+# https://render.com/docs/deploy-node-express-app
+
+# Build command
+build:
+  - npm install
+
+# Start command
+start:
+  - node src/server.js
+
+# Environment
+env:
+  - NODE_ENV=production
