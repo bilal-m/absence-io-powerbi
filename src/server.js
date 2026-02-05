@@ -36,6 +36,17 @@ app.use((req, res, next) => {
     next();
 });
 
+// API Key authentication for /api/* routes
+app.use('/api', (req, res, next) => {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) return next(); // No key configured = no auth required
+
+    const provided = req.query.key || req.headers['x-api-key'];
+    if (provided === apiKey) return next();
+
+    res.status(401).json({ error: 'Unauthorized. Provide API key via ?key= or X-API-Key header.' });
+});
+
 // ============================================
 // Root - API Documentation
 // ============================================

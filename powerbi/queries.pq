@@ -23,12 +23,13 @@
 
 let
     BaseUrl = "https://YOUR-APP-NAME.onrender.com",
+    ApiKey = "YOUR-API-KEY-HERE",
     Year = Number.ToText(Date.Year(DateTime.LocalNow())),
 
     Source = Json.Document(
         Web.Contents(
             BaseUrl & "/api/powerbi/annual-summary",
-            [Query = [year = Year]]
+            [Query = [year = Year, key = ApiKey]]
         )
     ),
 
