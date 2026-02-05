@@ -45,7 +45,7 @@ async function getAnnualSummary(req, res) {
                     teamNames: (user.teamNames || []).join(', '),
                     year: user.year,
                     month: user.month,
-                    monthLabel: `${MONTH_NAMES[i]} ${year}`,
+                    monthLabel: `${String(i + 1).padStart(2, '0')} - ${MONTH_NAMES[i]}`,
                     weeklyHours: user.weeklyHours,
                     scheduledHours: user.scheduledHours,
                     workedHours: user.workedHours,
