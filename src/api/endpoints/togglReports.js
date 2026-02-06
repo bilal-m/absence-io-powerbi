@@ -27,8 +27,24 @@ let clientsCacheTs = null;
 let tagsCache = null;
 let tagsCacheTs = null;
 
-// Monthly summary cache
+// Monthly summary cache (pruned to max 24 entries)
 const summaryCache = {};
+const MAX_SUMMARY_CACHE = 24;
+
+function pruneSummaryCache() {
+    const keys = Object.keys(summaryCache);
+    const now = Date.now();
+    for (const key of keys) {
+        if (now - summaryCache[key].timestamp >= SUMMARY_CACHE_TTL) delete summaryCache[key];
+    }
+    const remaining = Object.keys(summaryCache);
+    if (remaining.length > MAX_SUMMARY_CACHE) {
+        remaining.sort((a, b) => summaryCache[a].timestamp - summaryCache[b].timestamp);
+        for (let i = 0; i < remaining.length - MAX_SUMMARY_CACHE; i++) {
+            delete summaryCache[remaining[i]];
+        }
+    }
+}
 
 // ============================================
 // Metadata fetchers (cached 1 hour)
@@ -220,6 +236,7 @@ async function getTogglMonthlySummary(year, month) {
     }
 
     summaryCache[cacheKey] = { data: result, timestamp: now };
+    pruneSummaryCache();
     console.log(`[Toggl] Cached detailed summary for ${cacheKey}: ${result.size} users, ${totalEntries} entries`);
     return result;
 }

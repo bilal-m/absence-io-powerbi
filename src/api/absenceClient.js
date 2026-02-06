@@ -9,6 +9,8 @@ const axios = require('axios');
 const { generateAuthHeader } = require('../auth/hawkAuth');
 
 const BASE_URL = 'https://app.absence.io/api/v2';
+const REQUEST_TIMEOUT = 30000; // 30s timeout
+const MAX_PAGES = 50; // Safety limit to prevent infinite pagination
 
 /**
  * Make an authenticated request to Absence.io API
@@ -29,7 +31,8 @@ async function apiRequest(endpoint, options = {}) {
             method,
             url,
             headers,
-            data: options.body || {}
+            data: options.body || {},
+            timeout: REQUEST_TIMEOUT
         });
 
         return response.data;
@@ -56,7 +59,7 @@ async function fetchAll(endpoint, filter = {}, relations = []) {
     const limit = 100; // Max allowed by API
     let hasMore = true;
 
-    while (hasMore) {
+    for (let page = 0; page < MAX_PAGES && hasMore; page++) {
         const body = {
             skip,
             limit,
@@ -67,7 +70,7 @@ async function fetchAll(endpoint, filter = {}, relations = []) {
         const response = await apiRequest(endpoint, { body });
 
         if (response.data && response.data.length > 0) {
-            allData.push(...response.data);
+            for (const item of response.data) allData.push(item);
             skip += response.data.length;
             hasMore = response.data.length === limit;
         } else {
@@ -92,7 +95,8 @@ async function fetchById(endpoint, id) {
         const response = await axios({
             method: 'GET',
             url,
-            headers
+            headers,
+            timeout: REQUEST_TIMEOUT
         });
 
         return response.data;

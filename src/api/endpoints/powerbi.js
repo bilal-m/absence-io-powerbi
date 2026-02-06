@@ -11,9 +11,27 @@ const { getTogglUsers, getTogglHoursByMonth } = require('./togglReports');
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// In-memory cache (5-min TTL)
+// In-memory cache (5-min TTL, max 10 entries)
 let cache = {};
 const CACHE_TTL = 5 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 10;
+const ABSENCE_CONCURRENCY = 3; // Max parallel Absence.io month fetches
+
+function pruneCache() {
+    const keys = Object.keys(cache);
+    const now = Date.now();
+    for (const key of keys) {
+        if (now - cache[key].timestamp >= CACHE_TTL) delete cache[key];
+    }
+    // If still over limit, drop oldest
+    const remaining = Object.keys(cache);
+    if (remaining.length > MAX_CACHE_ENTRIES) {
+        remaining.sort((a, b) => cache[a].timestamp - cache[b].timestamp);
+        for (let i = 0; i < remaining.length - MAX_CACHE_ENTRIES; i++) {
+            delete cache[remaining[i]];
+        }
+    }
+}
 
 /**
  * GET /api/powerbi/annual-summary?fromYear=2024&toYear=2025
@@ -41,6 +59,8 @@ async function getAnnualSummary(req, res) {
         const togglEnabled = isTogglConfigured();
         const cacheKey = `${fromYear}-${toYear}${togglEnabled ? '-toggl' : ''}`;
 
+        res.set('Cache-Control', 'public, max-age=300'); // 5 min browser/Power BI cache
+
         if (cache[cacheKey] && (Date.now() - cache[cacheKey].timestamp < CACHE_TTL)) {
             return res.json(cache[cacheKey].data);
         }
@@ -53,8 +73,13 @@ async function getAnnualSummary(req, res) {
             }
         }
 
-        // Fetch Absence.io data in parallel
-        const absenceResults = await Promise.all(months.map(m => generateMonthlySummary(m.year, m.month)));
+        // Fetch Absence.io data in batches to limit memory on Render free tier
+        const absenceResults = [];
+        for (let i = 0; i < months.length; i += ABSENCE_CONCURRENCY) {
+            const batch = months.slice(i, i + ABSENCE_CONCURRENCY);
+            const results = await Promise.all(batch.map(m => generateMonthlySummary(m.year, m.month)));
+            absenceResults.push(...results);
+        }
 
         // Fetch Toggl data (graceful degradation — if Toggl fails, return data without it)
         let togglUsers = [];
@@ -180,6 +205,7 @@ async function getAnnualSummary(req, res) {
         }
 
         cache[cacheKey] = { data: rows, timestamp: Date.now() };
+        pruneCache();
         res.json(rows);
     } catch (error) {
         console.error('Error generating annual summary:', error.message);

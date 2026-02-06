@@ -332,7 +332,7 @@ app.use((err, req, res, next) => {
 // Start server
 // ============================================
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     const { isTogglConfigured } = require('./api/togglClient');
     console.log('='.repeat(50));
     console.log('Workforce Analytics API');
@@ -347,5 +347,9 @@ app.listen(PORT, () => {
     console.log(`  GET /health                      - Health check`);
     console.log('='.repeat(50));
 });
+
+// Prevent hung connections on Render free tier
+server.timeout = 120000;        // 2 min max request time
+server.keepAliveTimeout = 65000; // Slightly above typical LB timeout (60s)
 
 module.exports = app;
