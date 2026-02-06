@@ -1,7 +1,7 @@
 /**
- * Absence.io Power BI Middleware Server
- * 
- * Exposes REST API endpoints for Power BI to consume Absence.io data.
+ * Workforce Analytics API
+ *
+ * Aggregates data from Absence.io and Toggl Track for Power BI dashboards.
  */
 
 require('dotenv').config();
@@ -53,15 +53,15 @@ app.use('/api', (req, res, next) => {
 
 app.get('/', (req, res) => {
     res.json({
-        name: 'Absence.io Power BI Middleware',
-        version: '1.0.0',
-        description: 'Provides processed employee data for Power BI dashboards',
+        name: 'Workforce Analytics API',
+        version: '2.0.0',
+        description: 'Aggregates Absence.io and Toggl Track data for Power BI dashboards',
         endpoints: {
+            annualSummary: '/api/powerbi/annual-summary?fromYear=YYYY&toYear=YYYY',
             monthlySummary: '/api/monthly-summary?year=YYYY&month=MM',
-            annualSummary: '/api/powerbi/annual-summary?year=YYYY',
+            togglStatus: '/api/debug/toggl-status',
             health: '/health'
-        },
-        note: 'This middleware only exposes processed data. Raw Absence.io API endpoints are not available.'
+        }
     });
 });
 
@@ -70,10 +70,15 @@ app.get('/', (req, res) => {
 // ============================================
 
 app.get('/health', (req, res) => {
+    const { isTogglConfigured } = require('./api/togglClient');
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
-        version: '1.0.0'
+        version: '2.0.0',
+        integrations: {
+            absenceIo: true,
+            toggl: isTogglConfigured()
+        }
     });
 });
 
@@ -282,6 +287,38 @@ app.get('/api/debug/absences/:lastName', async (req, res) => {
     }
 });
 
+// Debug: Toggl connection status
+app.get('/api/debug/toggl-status', async (req, res) => {
+    const { isTogglConfigured } = require('./api/togglClient');
+
+    if (!isTogglConfigured()) {
+        return res.json({ enabled: false, message: 'Set TOGGL_API_TOKEN and TOGGL_WORKSPACE_ID to enable' });
+    }
+
+    try {
+        const { getTogglUsers, getTogglHoursByMonth } = require('./api/endpoints/togglReports');
+        const users = await getTogglUsers(true);
+        const year = parseInt(req.query.year) || new Date().getFullYear();
+        const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+        const hours = await getTogglHoursByMonth(year, month);
+
+        res.json({
+            enabled: true,
+            workspaceId: process.env.TOGGL_WORKSPACE_ID,
+            userCount: users.length,
+            users: users.map(u => ({ id: u.id, email: u.email, fullname: u.fullname })),
+            summary: {
+                year,
+                month,
+                usersWithHours: hours.size,
+                data: Array.from(hours.entries()).map(([id, h]) => ({ togglUserId: id, ...h }))
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ enabled: true, error: error.message });
+    }
+});
+
 // ============================================
 // Error handling
 // ============================================
@@ -296,23 +333,18 @@ app.use((err, req, res, next) => {
 // ============================================
 
 app.listen(PORT, () => {
+    const { isTogglConfigured } = require('./api/togglClient');
     console.log('='.repeat(50));
-    console.log('Absence.io Power BI Middleware');
+    console.log('Workforce Analytics API');
     console.log('='.repeat(50));
     console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Integrations: Absence.io [ON]  Toggl Track [${isTogglConfigured() ? 'ON' : 'OFF'}]`);
     console.log('');
-    console.log('Available endpoints:');
-    console.log(`  GET /health                          - Health check`);
-    console.log(`  GET /api/users                       - All users`);
-    console.log(`  GET /api/monthly-summary?year=&month= - Monthly summary (main endpoint)`);
-    console.log(`  GET /api/powerbi/annual-summary?year= - Annual summary (Power BI optimized)`);
-    console.log(`  GET /api/absences?startDate=&endDate= - Absences`);
-    console.log(`  GET /api/work-entries?startDate=&endDate= - Work entries`);
-    console.log(`  GET /api/departments                 - Departments`);
-    console.log(`  GET /api/locations                   - Locations`);
-    console.log(`  GET /api/teams                       - Teams`);
-    console.log(`  GET /api/holidays?startDate=&endDate= - Holidays`);
-    console.log(`  GET /api/reasons                     - Absence reasons`);
+    console.log('Key endpoints:');
+    console.log(`  GET /api/powerbi/annual-summary  - Combined data for Power BI`);
+    console.log(`  GET /api/monthly-summary         - Monthly summary`);
+    console.log(`  GET /api/debug/toggl-status      - Toggl connection test`);
+    console.log(`  GET /health                      - Health check`);
     console.log('='.repeat(50));
 });
 

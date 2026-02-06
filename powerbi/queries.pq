@@ -1,8 +1,8 @@
 /**
- * Power BI M Query Templates for Cloud Deployment
- * 
+ * Power BI M Query Templates for Workforce Analytics API
+ *
  * Replace BASE_URL with your Render.com URL, e.g.:
- * https://absence-io-middleware.onrender.com
+ * https://workforce-analytics-api.onrender.com
  */
 
 // ============================================
@@ -39,7 +39,9 @@ let
     Expanded = Table.ExpandRecordColumn(ToTable, "Column1", {
         "userId", "fullName", "departmentName", "locationName", "teamNames",
         "year", "month", "monthLabel", "monthSort", "weeklyHours",
-        "scheduledHours", "workedHours", "overtimeHours", "absenceDays", "holidayCount"
+        "scheduledHours", "workedHours", "overtimeHours", "absenceDays", "holidayCount",
+        "togglBillableHours", "togglNonBillableHours", "togglTotalHours",
+        "togglProjects", "togglClients", "togglTags", "togglTasks"
     }),
 
     TypedTable = Table.TransformColumnTypes(Expanded, {
@@ -57,7 +59,14 @@ let
         {"workedHours", type number},
         {"overtimeHours", type number},
         {"absenceDays", type number},
-        {"holidayCount", Int64.Type}
+        {"holidayCount", Int64.Type},
+        {"togglBillableHours", type number},
+        {"togglNonBillableHours", type number},
+        {"togglTotalHours", type number},
+        {"togglProjects", type text},
+        {"togglClients", type text},
+        {"togglTags", type text},
+        {"togglTasks", type text}
     }),
 
     Sorted = Table.Sort(TypedTable, {{"monthSort", Order.Ascending}})

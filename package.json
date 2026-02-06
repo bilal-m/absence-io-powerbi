@@ -1,7 +1,7 @@
 {
-  "name": "absence-io-powerbi-middleware",
-  "version": "1.0.0",
-  "description": "Middleware to connect Power BI with Absence.io API",
+  "name": "workforce-analytics-api",
+  "version": "2.0.0",
+  "description": "Data aggregation API for Power BI — combines Absence.io and Toggl Track",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
