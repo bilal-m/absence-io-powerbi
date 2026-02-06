@@ -45,13 +45,6 @@ async function getAnnualSummary(req, res) {
             return res.json(cache[cacheKey].data);
         }
 
-        // Fetch Toggl users once (cached 1hr internally)
-        const togglUsers = togglEnabled ? await getTogglUsers() : [];
-        const togglUserByEmail = new Map();
-        for (const tu of togglUsers) {
-            if (tu.email) togglUserByEmail.set(tu.email, tu);
-        }
-
         // Build month tasks
         const months = [];
         for (let year = fromYear; year <= toYear; year++) {
@@ -63,10 +56,32 @@ async function getAnnualSummary(req, res) {
         // Fetch Absence.io data in parallel
         const absenceResults = await Promise.all(months.map(m => generateMonthlySummary(m.year, m.month)));
 
-        // Fetch Toggl data sequentially to avoid rate limiting (detailed report API)
+        // Fetch Toggl data (graceful degradation — if Toggl fails, return data without it)
+        let togglUsers = [];
+        const togglUserByEmail = new Map();
         const togglResults = [];
-        for (const m of months) {
-            togglResults.push(togglEnabled ? await getTogglHoursByMonth(m.year, m.month) : new Map());
+        let togglAvailable = togglEnabled;
+
+        if (togglEnabled) {
+            try {
+                togglUsers = await getTogglUsers();
+                for (const tu of togglUsers) {
+                    if (tu.email) togglUserByEmail.set(tu.email, tu);
+                }
+                // Fetch sequentially to avoid rate limiting
+                for (const m of months) {
+                    togglResults.push(await getTogglHoursByMonth(m.year, m.month));
+                }
+            } catch (togglError) {
+                console.warn(`[Toggl] Failed to fetch data, returning without Toggl: ${togglError.message}`);
+                togglAvailable = false;
+                togglResults.length = 0;
+            }
+        }
+
+        // Fill empty Toggl results if Toggl failed or disabled
+        while (togglResults.length < months.length) {
+            togglResults.push(new Map());
         }
 
         // Flatten into a single array
@@ -79,15 +94,15 @@ async function getAnnualSummary(req, res) {
 
             // Absence.io users (enriched with Toggl data)
             for (const user of absenceData) {
-                let togglBillableHours = togglEnabled ? 0 : null;
-                let togglNonBillableHours = togglEnabled ? 0 : null;
-                let togglTotalHours = togglEnabled ? 0 : null;
+                let togglBillableHours = togglAvailable ? 0 : null;
+                let togglNonBillableHours = togglAvailable ? 0 : null;
+                let togglTotalHours = togglAvailable ? 0 : null;
                 let togglProjects = null;
                 let togglClients = null;
                 let togglTags = null;
                 let togglTasks = null;
 
-                if (togglEnabled) {
+                if (togglAvailable) {
                     const email = (user.email || '').toLowerCase().trim();
                     const togglUser = email ? togglUserByEmail.get(email) : null;
 
@@ -131,7 +146,7 @@ async function getAnnualSummary(req, res) {
             }
 
             // Toggl-only users (no Absence.io match)
-            if (togglEnabled) {
+            if (togglAvailable) {
                 for (const [togglUserId, h] of togglHours) {
                     if (!matchedTogglIds.has(togglUserId)) {
                         const tu = togglUsers.find(u => u.id === togglUserId);

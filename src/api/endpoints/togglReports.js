@@ -132,9 +132,10 @@ async function getTogglMonthlySummary(year, month) {
         getTogglTags()
     ]);
 
-    // Fetch detailed time entries with pagination
-    const allEntries = [];
+    // Fetch detailed time entries with pagination, aggregating on-the-fly to save memory
+    const userMap = new Map(); // userId -> { totalSeconds, billableSeconds, projectIds, tagIds, taskDescriptions }
     let nextRowNumber = null;
+    let totalEntries = 0;
     const maxPages = 20; // Safety limit
 
     for (let page = 0; page < maxPages; page++) {
@@ -152,42 +153,37 @@ async function getTogglMonthlySummary(year, month) {
         );
 
         if (!Array.isArray(response) || response.length === 0) break;
-        allEntries.push(...response);
 
-        // Toggl uses X-Next-Row-Number header for pagination, but in the JSON response
-        // the pagination continues while we get exactly 50 rows
+        // Aggregate each entry immediately instead of buffering
+        for (const entry of response) {
+            const userId = entry.user_id;
+            if (!userMap.has(userId)) {
+                userMap.set(userId, {
+                    totalSeconds: 0,
+                    billableSeconds: 0,
+                    projectIds: new Set(),
+                    tagIds: new Set(),
+                    taskDescriptions: new Set()
+                });
+            }
+            const agg = userMap.get(userId);
+
+            const entrySeconds = (entry.time_entries || []).reduce((sum, te) => sum + (te.seconds || 0), 0);
+            agg.totalSeconds += entrySeconds;
+            if (entry.billable) agg.billableSeconds += entrySeconds;
+
+            if (entry.project_id) agg.projectIds.add(entry.project_id);
+            if (entry.tag_ids) {
+                for (const tagId of entry.tag_ids) agg.tagIds.add(tagId);
+            }
+            if (entry.description && entry.description.trim()) {
+                agg.taskDescriptions.add(entry.description.trim());
+            }
+        }
+        totalEntries += response.length;
+
         if (response.length < 50) break;
         nextRowNumber = (nextRowNumber || 1) + response.length;
-    }
-
-    // Aggregate per user
-    const userMap = new Map(); // userId -> { totalSeconds, billableSeconds, projectIds, tagIds, taskDescriptions }
-
-    for (const entry of allEntries) {
-        const userId = entry.user_id;
-        if (!userMap.has(userId)) {
-            userMap.set(userId, {
-                totalSeconds: 0,
-                billableSeconds: 0,
-                projectIds: new Set(),
-                tagIds: new Set(),
-                taskDescriptions: new Set()
-            });
-        }
-        const agg = userMap.get(userId);
-
-        // Sum time from time_entries array
-        const entrySeconds = (entry.time_entries || []).reduce((sum, te) => sum + (te.seconds || 0), 0);
-        agg.totalSeconds += entrySeconds;
-        if (entry.billable) agg.billableSeconds += entrySeconds;
-
-        if (entry.project_id) agg.projectIds.add(entry.project_id);
-        if (entry.tag_ids) {
-            for (const tagId of entry.tag_ids) agg.tagIds.add(tagId);
-        }
-        if (entry.description && entry.description.trim()) {
-            agg.taskDescriptions.add(entry.description.trim());
-        }
     }
 
     // Resolve IDs to names
@@ -224,7 +220,7 @@ async function getTogglMonthlySummary(year, month) {
     }
 
     summaryCache[cacheKey] = { data: result, timestamp: now };
-    console.log(`[Toggl] Cached detailed summary for ${cacheKey}: ${result.size} users, ${allEntries.length} entries`);
+    console.log(`[Toggl] Cached detailed summary for ${cacheKey}: ${result.size} users, ${totalEntries} entries`);
     return result;
 }
 
