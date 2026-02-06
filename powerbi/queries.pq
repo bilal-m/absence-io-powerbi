@@ -41,7 +41,8 @@ let
         "year", "month", "monthLabel", "monthSort", "weeklyHours",
         "scheduledHours", "workedHours", "overtimeHours", "absenceDays", "holidayCount",
         "togglBillableHours", "togglNonBillableHours", "togglTotalHours",
-        "togglProjects", "togglClients", "togglTags", "togglTasks"
+        "togglProjects", "togglClients", "togglTags", "togglTasks",
+        "togglLastRefresh"
     }),
 
     TypedTable = Table.TransformColumnTypes(Expanded, {
@@ -66,7 +67,8 @@ let
         {"togglProjects", type text},
         {"togglClients", type text},
         {"togglTags", type text},
-        {"togglTasks", type text}
+        {"togglTasks", type text},
+        {"togglLastRefresh", type datetimezone}
     }),
 
     Sorted = Table.Sort(TypedTable, {{"monthSort", Order.Ascending}})

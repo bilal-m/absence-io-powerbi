@@ -6,7 +6,7 @@
 
 const { generateMonthlySummary } = require('../../services/dataTransformer');
 const { isTogglConfigured } = require('../togglClient');
-const { getTogglUsers, getTogglHoursByMonth } = require('./togglReports');
+const { getTogglUsers, getTogglHoursByMonth, getTogglLastRefresh } = require('./togglReports');
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -113,6 +113,7 @@ async function getAnnualSummary(req, res) {
         }
 
         // Flatten into a single array
+        const togglRefreshTime = togglAvailable ? (getTogglLastRefresh() || null) : null;
         const rows = [];
         for (let idx = 0; idx < months.length; idx++) {
             const { year, month } = months[idx];
@@ -169,7 +170,8 @@ async function getAnnualSummary(req, res) {
                     togglProjects,
                     togglClients,
                     togglTags,
-                    togglTasks
+                    togglTasks,
+                    togglLastRefresh: togglRefreshTime
                 });
             }
 
@@ -200,7 +202,8 @@ async function getAnnualSummary(req, res) {
                             togglProjects: h.projects,
                             togglClients: h.clients,
                             togglTags: h.tags,
-                            togglTasks: h.tasks
+                            togglTasks: h.tasks,
+                            togglLastRefresh: togglRefreshTime
                         });
                     }
                 }
