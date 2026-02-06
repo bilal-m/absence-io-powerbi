@@ -7,6 +7,11 @@
 const { generateMonthlySummary } = require('../../services/dataTransformer');
 const { isTogglConfigured } = require('../togglClient');
 const { getTogglUsers, getTogglHoursByMonth, getTogglLastRefresh } = require('./togglReports');
+const { getUsers } = require('./users');
+const { getReasons } = require('./reasons');
+const { getDepartments } = require('./departments');
+const { getLocations } = require('./locations');
+const { getTeams } = require('./teams');
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -76,11 +81,17 @@ async function getAnnualSummary(req, res) {
             }
         }
 
+        // Pre-fetch shared metadata once (avoids redundant API calls across months)
+        const [users, reasons, departments, locations, teams] = await Promise.all([
+            getUsers(), getReasons(), getDepartments(), getLocations(), getTeams()
+        ]);
+        const sharedData = { users, reasons, departments, locations, teams };
+
         // Fetch Absence.io data in batches to limit memory on Render free tier
         const absenceResults = [];
         for (let i = 0; i < months.length; i += ABSENCE_CONCURRENCY) {
             const batch = months.slice(i, i + ABSENCE_CONCURRENCY);
-            const results = await Promise.all(batch.map(m => generateMonthlySummary(m.year, m.month)));
+            const results = await Promise.all(batch.map(m => generateMonthlySummary(m.year, m.month, sharedData)));
             absenceResults.push(...results);
         }
 

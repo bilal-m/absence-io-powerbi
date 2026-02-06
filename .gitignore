@@ -16,3 +16,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Toggl disk cache
+.toggl-cache.json

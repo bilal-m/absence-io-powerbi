@@ -12,8 +12,10 @@ const TOGGL_REPORTS_BASE = 'https://api.track.toggl.com/reports/api/v3';
 const REQUEST_TIMEOUT = 30000; // 30s timeout
 const RATE_LIMIT_DELAY = 500; // 500ms between requests (safe for Premium: 600 req/hr)
 const MAX_RETRIES = 2;
+const CIRCUIT_BREAKER_TTL = 15 * 60 * 1000; // 15 min backoff after 402 (quota resets hourly)
 
 let lastRequestTime = 0;
+let circuitOpenUntil = 0; // Timestamp when circuit breaker resets
 
 function isTogglConfigured() {
     return !!(process.env.TOGGL_API_TOKEN && process.env.TOGGL_WORKSPACE_ID);
@@ -34,8 +36,7 @@ async function throttle() {
     lastRequestTime = Date.now();
 }
 
-// Retry wrapper: only retry 429 (burst limit, resets in seconds).
-// 402 (hourly quota exhausted) fails immediately — can take up to an hour to reset.
+// Retry wrapper for v9 API (no circuit breaker — these calls are lightweight)
 async function withRetry(fn) {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
@@ -57,6 +58,7 @@ async function withRetry(fn) {
     }
 }
 
+// v9 API — metadata calls (users, projects, clients). No circuit breaker.
 async function togglGet(path) {
     return withRetry(async () => {
         const response = await axios.get(`${TOGGL_API_BASE}${path}`, {
@@ -67,14 +69,28 @@ async function togglGet(path) {
     });
 }
 
+// Reports API — has its own circuit breaker (402 = quota exhausted, back off 15 min)
 async function togglReportsPost(path, body = {}) {
-    return withRetry(async () => {
-        const response = await axios.post(`${TOGGL_REPORTS_BASE}${path}`, body, {
-            headers: { 'Authorization': getAuthHeader(), 'Content-Type': 'application/json' },
-            timeout: REQUEST_TIMEOUT
+    if (circuitOpenUntil > Date.now()) {
+        const remainMin = Math.ceil((circuitOpenUntil - Date.now()) / 60000);
+        throw new Error(`Toggl Reports circuit breaker open (quota exhausted), retrying in ~${remainMin} min`);
+    }
+
+    try {
+        return await withRetry(async () => {
+            const response = await axios.post(`${TOGGL_REPORTS_BASE}${path}`, body, {
+                headers: { 'Authorization': getAuthHeader(), 'Content-Type': 'application/json' },
+                timeout: REQUEST_TIMEOUT
+            });
+            return response.data;
         });
-        return response.data;
-    });
+    } catch (error) {
+        if (error.message?.includes('(402)')) {
+            circuitOpenUntil = Date.now() + CIRCUIT_BREAKER_TTL;
+            console.warn(`[Toggl] Reports API quota exhausted (402), circuit breaker open for 15 min`);
+        }
+        throw error;
+    }
 }
 
 module.exports = { isTogglConfigured, togglGet, togglReportsPost };

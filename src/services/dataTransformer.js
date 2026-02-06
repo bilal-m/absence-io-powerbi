@@ -83,19 +83,42 @@ function calculateScheduledHours(user, year, month, holidayCount) {
  * Generate monthly summary for all users
  * @param {number} year - Year
  * @param {number} month - Month (1-12)
+ * @param {Object} [sharedData] - Pre-fetched metadata to avoid redundant API calls in multi-month requests
+ * @param {Array} [sharedData.users] - Pre-fetched users
+ * @param {Array} [sharedData.reasons] - Pre-fetched reasons
+ * @param {Array} [sharedData.departments] - Pre-fetched departments
+ * @param {Array} [sharedData.locations] - Pre-fetched locations
+ * @param {Array} [sharedData.teams] - Pre-fetched teams
  * @returns {Promise<Array>} Monthly summary records
  */
-async function generateMonthlySummary(year, month) {
-    // Fetch all required data
-    const [users, absences, workHours, reasons, departments, locations, teams] = await Promise.all([
+async function generateMonthlySummary(year, month, sharedData = null) {
+    // Use pre-fetched metadata if available, otherwise fetch fresh
+    const hasShared = sharedData && sharedData.users;
+    const metadataPromises = hasShared ? [] : [
         getUsers(),
-        getAbsencesByMonth(year, month),
-        sumWorkHoursByMonth(year, month),
         getReasons(),
         getDepartments(),
         getLocations(),
         getTeams()
+    ];
+
+    // Always fetch month-specific data fresh
+    const monthPromises = [
+        getAbsencesByMonth(year, month),
+        sumWorkHoursByMonth(year, month)
+    ];
+
+    const [monthResults, metadataResults] = await Promise.all([
+        Promise.all(monthPromises),
+        Promise.all(metadataPromises)
     ]);
+
+    const [absences, workHours] = monthResults;
+    const users = hasShared ? sharedData.users : metadataResults[0];
+    const reasons = hasShared ? sharedData.reasons : metadataResults[1];
+    const departments = hasShared ? sharedData.departments : metadataResults[2];
+    const locations = hasShared ? sharedData.locations : metadataResults[3];
+    const teams = hasShared ? sharedData.teams : metadataResults[4];
 
     // Create lookup maps
     const departmentMap = new Map(departments.map(d => [d.id, d.name]));

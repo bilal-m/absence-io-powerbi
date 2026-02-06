@@ -1,8 +1,9 @@
 /**
  * Toggl Track Reports
  *
- * Fetches workspace users, projects, clients, tags, and time entry summaries.
+ * Fetches workspace users, projects, clients, and time entry summaries.
  * Provides monthly billable/non-billable hours per user with project/client metadata.
+ * Uses Summary API (1 call/month) instead of Search API (paginated) to minimize quota usage.
  * All fetchers serve stale cache when the Toggl API is unavailable (e.g. 402 quota).
  * Historical months use 24hr cache to minimize API calls.
  */
@@ -10,9 +11,9 @@
 const { isTogglConfigured, togglGet, togglReportsPost } = require('../togglClient');
 
 // Cache TTLs
-const METADATA_CACHE_TTL = 60 * 60 * 1000;        // 1 hour for users/projects/clients/tags
+const METADATA_CACHE_TTL = 60 * 60 * 1000;        // 1 hour for users/projects/clients
 const SUMMARY_CACHE_TTL = 5 * 60 * 1000;           // 5 min for current month
-const HISTORICAL_CACHE_TTL = 24 * 60 * 60 * 1000;  // 24 hours for past months (data won't change)
+const HISTORICAL_CACHE_TTL = 24 * 60 * 60 * 1000;  // 24 hours for past months
 
 // Workspace users cache
 let usersCache = null;
@@ -25,10 +26,6 @@ let projectsCacheTs = null;
 // Clients cache (id -> name)
 let clientsCache = null;
 let clientsCacheTs = null;
-
-// Tags cache (id -> name)
-let tagsCache = null;
-let tagsCacheTs = null;
 
 // Monthly summary cache (pruned to max 36 entries by count only — stale entries kept as fallback)
 const summaryCache = {};
@@ -135,38 +132,13 @@ async function getTogglClients() {
     }
 }
 
-async function getTogglTags() {
-    if (!isTogglConfigured()) return new Map();
-    const now = Date.now();
-    if (tagsCache && (now - tagsCacheTs < METADATA_CACHE_TTL)) return tagsCache;
-
-    try {
-        const workspaceId = process.env.TOGGL_WORKSPACE_ID;
-        const raw = await togglGet(`/api/v9/workspaces/${workspaceId}/tags`);
-
-        tagsCache = new Map();
-        for (const t of (raw || [])) {
-            tagsCache.set(t.id, t.name);
-        }
-        tagsCacheTs = now;
-        console.log(`[Toggl] Cached ${tagsCache.size} tags`);
-        return tagsCache;
-    } catch (error) {
-        if (tagsCache) {
-            console.warn(`[Toggl] Failed to refresh tags, using stale cache: ${error.message}`);
-            return tagsCache;
-        }
-        throw error;
-    }
-}
-
 // ============================================
-// Monthly summary (5 min current month, 24hr historical, stale fallback, deduplication)
+// Monthly summary — uses Summary API (1 call/month, no pagination)
 // ============================================
 
 /**
- * Fetch detailed time entries for a month with pagination.
- * Returns per-user aggregation: hours, projects, clients, tags, tasks.
+ * Fetch monthly summary via Summary Reports API.
+ * Returns per-user aggregation: hours, projects, clients.
  * Falls back to stale cache if API is unavailable.
  * Deduplicates concurrent requests for the same month.
  */
@@ -207,72 +179,51 @@ async function _fetchMonthlySummary(year, month, cacheKey) {
         const lastDay = new Date(year, month, 0).getDate();
         const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
-        // Fetch lookup tables in parallel
-        const [projects, clients, tags] = await Promise.all([
+        // Fetch project/client lookup tables via v9 API (not Reports API — no quota impact)
+        const [projects, clients] = await Promise.all([
             getTogglProjects(),
-            getTogglClients(),
-            getTogglTags()
+            getTogglClients()
         ]);
 
-        // Fetch detailed time entries with pagination, aggregating on-the-fly to save memory
-        const userMap = new Map();
-        let nextRowNumber = null;
-        let totalEntries = 0;
-        const maxPages = 20;
-
-        for (let page = 0; page < maxPages; page++) {
-            const body = {
+        // Summary API: 1 call per month, returns aggregated totals grouped by user→project
+        const response = await togglReportsPost(
+            `/workspace/${workspaceId}/summary/time_entries`,
+            {
                 start_date: startDate,
                 end_date: endDate,
-            };
-            if (nextRowNumber !== null) {
-                body.first_row_number = nextRowNumber;
+                grouping: 'users',
+                sub_grouping: 'projects',
+                include_time_entry_ids: false
             }
+        );
 
-            const response = await togglReportsPost(
-                `/workspace/${workspaceId}/search/time_entries`,
-                body
-            );
-
-            if (!Array.isArray(response) || response.length === 0) break;
-
-            for (const entry of response) {
-                const userId = entry.user_id;
-                if (!userMap.has(userId)) {
-                    userMap.set(userId, {
-                        totalSeconds: 0,
-                        billableSeconds: 0,
-                        projectIds: new Set(),
-                        tagIds: new Set(),
-                        taskDescriptions: new Set()
-                    });
-                }
-                const agg = userMap.get(userId);
-
-                const entrySeconds = (entry.time_entries || []).reduce((sum, te) => sum + (te.seconds || 0), 0);
-                agg.totalSeconds += entrySeconds;
-                if (entry.billable) agg.billableSeconds += entrySeconds;
-
-                if (entry.project_id) agg.projectIds.add(entry.project_id);
-                if (entry.tag_ids) {
-                    for (const tagId of entry.tag_ids) agg.tagIds.add(tagId);
-                }
-                if (entry.description && entry.description.trim()) {
-                    agg.taskDescriptions.add(entry.description.trim());
-                }
-            }
-            totalEntries += response.length;
-
-            if (response.length < 50) break;
-            nextRowNumber = (nextRowNumber || 1) + response.length;
-        }
-
-        // Resolve IDs to names
+        // Parse Summary API response: { groups: [{ id: userId, sub_groups: [...] }] }
         const result = new Map();
-        for (const [userId, agg] of userMap) {
+        const groups = response?.groups || [];
+
+        for (const group of groups) {
+            const userId = group.id;
+            let totalSeconds = 0;
+            let billableSeconds = 0;
+            const projectIds = new Set();
+
+            for (const sub of (group.sub_groups || [])) {
+                totalSeconds += sub.seconds || 0;
+                // billable_seconds may be at sub_group level or inside rates array
+                if (sub.billable_seconds != null) {
+                    billableSeconds += sub.billable_seconds;
+                } else if (sub.rates) {
+                    for (const rate of sub.rates) {
+                        billableSeconds += rate.billable_seconds || 0;
+                    }
+                }
+                if (sub.id) projectIds.add(sub.id);
+            }
+
+            // Resolve project and client names from v9 metadata
             const projectNames = [];
             const clientIds = new Set();
-            for (const pid of agg.projectIds) {
+            for (const pid of projectIds) {
                 const proj = projects.get(pid);
                 if (proj) {
                     projectNames.push(proj.name);
@@ -284,26 +235,21 @@ async function _fetchMonthlySummary(year, month, cacheKey) {
                 const name = clients.get(cid);
                 if (name) clientNames.push(name);
             }
-            const tagNames = [];
-            for (const tid of agg.tagIds) {
-                const name = tags.get(tid);
-                if (name) tagNames.push(name);
-            }
 
             result.set(userId, {
-                totalSeconds: agg.totalSeconds,
-                billableSeconds: agg.billableSeconds,
+                totalSeconds,
+                billableSeconds,
                 projectNames,
                 clientNames,
-                tagNames,
-                taskDescriptions: [...agg.taskDescriptions]
+                tagNames: [],
+                taskDescriptions: []
             });
         }
 
         summaryCache[cacheKey] = { data: result, timestamp: Date.now() };
         togglLastRefresh = new Date().toISOString();
         pruneSummaryCache();
-        console.log(`[Toggl] Cached ${isCurrentMonth ? '' : 'historical '}summary for ${cacheKey}: ${result.size} users, ${totalEntries} entries`);
+        console.log(`[Toggl] Summary for ${cacheKey}: ${result.size} users, ${groups.length} groups`);
         return result;
     } catch (error) {
         if (summaryCache[cacheKey]) {
@@ -340,4 +286,4 @@ async function getTogglHoursByMonth(year, month) {
     return result;
 }
 
-module.exports = { getTogglUsers, getTogglProjects, getTogglClients, getTogglTags, getTogglMonthlySummary, getTogglHoursByMonth, getTogglLastRefresh };
+module.exports = { getTogglUsers, getTogglProjects, getTogglClients, getTogglMonthlySummary, getTogglHoursByMonth, getTogglLastRefresh };
