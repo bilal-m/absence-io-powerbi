@@ -10,7 +10,7 @@ const axios = require('axios');
 const TOGGL_API_BASE = 'https://api.track.toggl.com';
 const TOGGL_REPORTS_BASE = 'https://api.track.toggl.com/reports/api/v3';
 const REQUEST_TIMEOUT = 30000; // 30s timeout
-const RATE_LIMIT_DELAY = 1100; // 1.1s between requests (Toggl leaky bucket = 1 req/sec)
+const RATE_LIMIT_DELAY = 500; // 500ms between requests (safe for Premium: 600 req/hr)
 const MAX_RETRIES = 2;
 
 let lastRequestTime = 0;

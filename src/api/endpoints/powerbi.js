@@ -65,10 +65,13 @@ async function getAnnualSummary(req, res) {
             return res.json(cache[cacheKey].data);
         }
 
-        // Build month tasks
+        // Build month tasks (only up to current month to avoid empty future data)
+        const now = new Date();
+        const currentMonth = now.getMonth() + 1;
         const months = [];
         for (let year = fromYear; year <= toYear; year++) {
-            for (let month = 1; month <= 12; month++) {
+            const maxMonth = (year === currentYear) ? currentMonth : 12;
+            for (let month = 1; month <= maxMonth; month++) {
                 months.push({ year, month });
             }
         }
@@ -154,7 +157,7 @@ async function getAnnualSummary(req, res) {
                     month,
                     monthLabel: `${MONTH_NAMES[month - 1]} ${year}`,
                     monthSort: year * 100 + month,
-                    weeklyHours: user.weeklyHours,
+                    weeklyHours: user.weeklyHours || 0,
                     scheduledHours: user.scheduledHours,
                     workedHours: user.workedHours,
                     overtimeHours: user.overtimeHours,
@@ -204,8 +207,11 @@ async function getAnnualSummary(req, res) {
             }
         }
 
-        cache[cacheKey] = { data: rows, timestamp: Date.now() };
-        pruneCache();
+        // Only cache complete responses (skip if Toggl was configured but failed)
+        if (!togglEnabled || togglAvailable) {
+            cache[cacheKey] = { data: rows, timestamp: Date.now() };
+            pruneCache();
+        }
         res.json(rows);
     } catch (error) {
         console.error('Error generating annual summary:', error.message);

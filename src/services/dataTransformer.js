@@ -258,8 +258,9 @@ async function generateMonthlySummary(year, month) {
         if (!user.active) continue;
 
         // Get user's teams
+        const userTeamIds = user.teamIds || [];
         const userTeams = teams.filter(t =>
-            user.teamIds.includes(t.id) || t.memberIds?.includes(user.id)
+            userTeamIds.includes(t.id) || t.memberIds?.includes(user.id)
         );
 
         // Get holidays for user's location
@@ -304,11 +305,11 @@ async function generateMonthlySummary(year, month) {
             departmentName: departmentMap.get(user.departmentId) || null,
             locationId: user.locationId,
             locationName: userLocation?.name || null,
-            teamIds: user.teamIds,
+            teamIds: userTeamIds,
             teamNames: userTeams.map(t => t.name),
             year,
             month,
-            weeklyHours: user.weeklyHours,
+            weeklyHours: user.weeklyHours || 0,
             scheduledHours,
             workedHours,
             absenceDays: userAbsences.days,
