@@ -96,12 +96,17 @@ async function getAnnualSummary(req, res) {
                 for (const tu of togglUsers) {
                     if (tu.email) togglUserByEmail.set(tu.email, tu);
                 }
-                // Fetch sequentially to avoid rate limiting
+                // Fetch sequentially; per-month errors return empty Map (partial data > no data)
                 for (const m of months) {
-                    togglResults.push(await getTogglHoursByMonth(m.year, m.month));
+                    try {
+                        togglResults.push(await getTogglHoursByMonth(m.year, m.month));
+                    } catch (monthError) {
+                        console.warn(`[Toggl] No data for ${m.year}-${m.month}: ${monthError.message}`);
+                        togglResults.push(new Map());
+                    }
                 }
             } catch (togglError) {
-                console.warn(`[Toggl] Failed to fetch data, returning without Toggl: ${togglError.message}`);
+                console.warn(`[Toggl] Failed to initialize Toggl: ${togglError.message}`);
                 togglAvailable = false;
                 togglResults.length = 0;
             }

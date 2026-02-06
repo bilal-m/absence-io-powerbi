@@ -4,13 +4,15 @@
  * Fetches workspace users, projects, clients, tags, and time entry summaries.
  * Provides monthly billable/non-billable hours per user with project/client metadata.
  * All fetchers serve stale cache when the Toggl API is unavailable (e.g. 402 quota).
+ * Historical months use 24hr cache to minimize API calls.
  */
 
 const { isTogglConfigured, togglGet, togglReportsPost } = require('../togglClient');
 
 // Cache TTLs
-const METADATA_CACHE_TTL = 60 * 60 * 1000; // 1 hour for users/projects/clients/tags
-const SUMMARY_CACHE_TTL = 5 * 60 * 1000;   // 5 min for monthly data
+const METADATA_CACHE_TTL = 60 * 60 * 1000;        // 1 hour for users/projects/clients/tags
+const SUMMARY_CACHE_TTL = 5 * 60 * 1000;           // 5 min for current month
+const HISTORICAL_CACHE_TTL = 24 * 60 * 60 * 1000;  // 24 hours for past months (data won't change)
 
 // Workspace users cache
 let usersCache = null;
@@ -28,12 +30,15 @@ let clientsCacheTs = null;
 let tagsCache = null;
 let tagsCacheTs = null;
 
-// Monthly summary cache (pruned to max 24 entries by count only — stale entries kept as fallback)
+// Monthly summary cache (pruned to max 36 entries by count only — stale entries kept as fallback)
 const summaryCache = {};
-const MAX_SUMMARY_CACHE = 24;
+const MAX_SUMMARY_CACHE = 36;
 
 // Last successful Toggl data refresh (ISO string)
 let togglLastRefresh = null;
+
+// In-progress fetch deduplication (prevents concurrent requests from burning quota)
+const inProgressFetches = new Map();
 
 function getTogglLastRefresh() {
     return togglLastRefresh;
@@ -156,20 +161,43 @@ async function getTogglTags() {
 }
 
 // ============================================
-// Monthly summary (cached 5 min, stale fallback)
+// Monthly summary (5 min current month, 24hr historical, stale fallback, deduplication)
 // ============================================
 
 /**
  * Fetch detailed time entries for a month with pagination.
  * Returns per-user aggregation: hours, projects, clients, tags, tasks.
  * Falls back to stale cache if API is unavailable.
+ * Deduplicates concurrent requests for the same month.
  */
 async function getTogglMonthlySummary(year, month) {
     if (!isTogglConfigured()) return new Map();
 
     const cacheKey = `${year}-${String(month).padStart(2, '0')}`;
+
+    // Dedup: if another request is already fetching this month, reuse it
+    if (inProgressFetches.has(cacheKey)) {
+        return inProgressFetches.get(cacheKey);
+    }
+
+    const promise = _fetchMonthlySummary(year, month, cacheKey);
+    inProgressFetches.set(cacheKey, promise);
+    try {
+        return await promise;
+    } finally {
+        inProgressFetches.delete(cacheKey);
+    }
+}
+
+async function _fetchMonthlySummary(year, month, cacheKey) {
     const now = Date.now();
-    if (summaryCache[cacheKey] && (now - summaryCache[cacheKey].timestamp < SUMMARY_CACHE_TTL)) {
+
+    // Historical months use 24hr cache, current month uses 5 min
+    const currentDate = new Date();
+    const isCurrentMonth = (year === currentDate.getFullYear() && month === currentDate.getMonth() + 1);
+    const ttl = isCurrentMonth ? SUMMARY_CACHE_TTL : HISTORICAL_CACHE_TTL;
+
+    if (summaryCache[cacheKey] && (now - summaryCache[cacheKey].timestamp < ttl)) {
         return summaryCache[cacheKey].data;
     }
 
@@ -272,10 +300,10 @@ async function getTogglMonthlySummary(year, month) {
             });
         }
 
-        summaryCache[cacheKey] = { data: result, timestamp: now };
+        summaryCache[cacheKey] = { data: result, timestamp: Date.now() };
         togglLastRefresh = new Date().toISOString();
         pruneSummaryCache();
-        console.log(`[Toggl] Cached detailed summary for ${cacheKey}: ${result.size} users, ${totalEntries} entries`);
+        console.log(`[Toggl] Cached ${isCurrentMonth ? '' : 'historical '}summary for ${cacheKey}: ${result.size} users, ${totalEntries} entries`);
         return result;
     } catch (error) {
         if (summaryCache[cacheKey]) {
