@@ -110,9 +110,43 @@ function getHoursForDate(schedule, date) {
 }
 
 /**
+ * Get the effective date range for a user within a month, clamped by employment dates.
+ * Returns null if the user was not employed at all during this month.
+ * @param {Object} user - User object with employmentStartDate and employmentEndDate
+ * @param {number} year - Year
+ * @param {number} month - Month (1-12)
+ * @returns {{ firstDay: Date, lastDay: Date } | null}
+ */
+function getEmploymentBoundedRange(user, year, month) {
+    const monthStart = new Date(year, month - 1, 1);
+    const monthEnd = new Date(year, month, 0); // last day of month
+
+    let firstDay = monthStart;
+    let lastDay = monthEnd;
+
+    if (user.employmentStartDate) {
+        const empStart = new Date(user.employmentStartDate);
+        // Normalize to date-only (strip time) to avoid timezone issues
+        const empStartDate = new Date(empStart.getFullYear(), empStart.getMonth(), empStart.getDate());
+        if (empStartDate > lastDay) return null; // hasn't started yet
+        if (empStartDate > firstDay) firstDay = empStartDate;
+    }
+
+    if (user.employmentEndDate) {
+        const empEnd = new Date(user.employmentEndDate);
+        const empEndDate = new Date(empEnd.getFullYear(), empEnd.getMonth(), empEnd.getDate());
+        if (empEndDate < firstDay) return null; // already left
+        if (empEndDate < lastDay) lastDay = empEndDate;
+    }
+
+    return { firstDay, lastDay };
+}
+
+/**
  * Calculate total scheduled hours for a user in a month
  * This uses the user's actual schedule to determine working days and hours
  * Scheduled hours are ONLY counted for days when the employee is NOT on holiday or absence
+ * Day range is clamped by employmentStartDate / employmentEndDate
  * @param {Object} user - User object with schedules
  * @param {number} year - Year
  * @param {number} month - Month (1-12)
@@ -121,31 +155,23 @@ function getHoursForDate(schedule, date) {
  * @returns {number} Total scheduled hours for the month
  */
 function calculateScheduleBasedHours(user, year, month, holidayDates = [], absenceDates = []) {
+    // Clamp to employment period — return 0 if not employed this month
+    const range = getEmploymentBoundedRange(user, year, month);
+    if (!range) return 0;
+
     const schedules = user.schedules || [];
 
-    // If no schedules at all, fall back to weeklyHours calculation
-    if (schedules.length === 0) {
-        return calculateFallbackHours(user, year, month, holidayDates, absenceDates);
-    }
-
-    // Determine if we have at least one non-empty schedule in the whole history
-    const hasAnyWorkSchedule = schedules.some(s => isScheduleNotEmpty(s));
-
-    // If NO schedule has any work hours, fall back to weeklyHours
-    if (!hasAnyWorkSchedule && (user.weeklyHours || 0) > 0) {
-        return calculateFallbackHours(user, year, month, holidayDates, absenceDates);
-    }
+    // No schedules = no scheduled hours (Absence.io derives hours entirely from schedules)
+    if (schedules.length === 0) return 0;
 
     // Create Sets for quick lookup of days to skip
     const holidaySet = new Set(holidayDates.map(d => d.toDateString()));
     const absenceSet = new Set(absenceDates.map(d => d.toDateString()));
 
     let totalHours = 0;
-    const firstDay = new Date(year, month - 1, 1);
-    const lastDay = new Date(year, month, 0);
 
-    const current = new Date(firstDay);
-    while (current <= lastDay) {
+    const current = new Date(range.firstDay);
+    while (current <= range.lastDay) {
         const dateStr = current.toDateString();
 
         // Skip if this is a holiday
@@ -170,11 +196,6 @@ function calculateScheduleBasedHours(user, year, month, holidayDates = [], absen
         current.setDate(current.getDate() + 1);
     }
 
-    // Final guard: If we ended up with 0 but have weekly hours, maybe the schedules picked were all empty
-    if (totalHours === 0 && (user.weeklyHours || 0) > 0) {
-        return calculateFallbackHours(user, year, month, holidayDates, absenceDates);
-    }
-
     return Math.round(totalHours * 100) / 100;
 }
 
@@ -189,6 +210,10 @@ function calculateScheduleBasedHours(user, year, month, holidayDates = [], absen
  * @returns {number} Scheduled hours
  */
 function calculateFallbackHours(user, year, month, holidayDates = [], absenceDates = []) {
+    // Clamp to employment period — return 0 if not employed this month
+    const range = getEmploymentBoundedRange(user, year, month);
+    if (!range) return 0;
+
     const weeklyHours = user.weeklyHours || parseFloat(process.env.DEFAULT_WEEKLY_HOURS) || 40;
     const dailyHours = weeklyHours / 5;
 
@@ -196,11 +221,9 @@ function calculateFallbackHours(user, year, month, holidayDates = [], absenceDat
     const absenceSet = new Set(absenceDates.map(d => d.toDateString()));
 
     let workingDays = 0;
-    const firstDay = new Date(year, month - 1, 1);
-    const lastDay = new Date(year, month, 0);
 
-    const current = new Date(firstDay);
-    while (current <= lastDay) {
+    const current = new Date(range.firstDay);
+    while (current <= range.lastDay) {
         const dayOfWeek = current.getDay();
         const dateStr = current.toDateString();
         // Mon-Fri and not a holiday and not an absence
@@ -238,6 +261,7 @@ module.exports = {
     calculateDayHoursFromShifts,
     getApplicableSchedule,
     getHoursForDate,
+    getEmploymentBoundedRange,
     calculateScheduleBasedHours,
     calculateFallbackHours,
     getScheduleSummary

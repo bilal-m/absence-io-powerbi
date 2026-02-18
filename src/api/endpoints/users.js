@@ -28,6 +28,8 @@ async function getUsers() {
         teamIds: user.teamIds || [],
         weeklyHours: user.weeklyHours || parseFloat(process.env.DEFAULT_WEEKLY_HOURS) || 40,
         schedules: user.schedules || null,
+        employmentStartDate: user.employmentStartDate || null,
+        employmentEndDate: user.employmentEndDate || null,
         active: user.active !== false,
         created: user.created,
         modified: user.modified
@@ -61,6 +63,8 @@ async function getUserById(userId) {
         teamIds: user.teamIds || [],
         weeklyHours: user.weeklyHours || parseFloat(process.env.DEFAULT_WEEKLY_HOURS) || 40,
         schedules: user.schedules || null,
+        employmentStartDate: user.employmentStartDate || null,
+        employmentEndDate: user.employmentEndDate || null,
         active: user.active !== false
     };
 }
