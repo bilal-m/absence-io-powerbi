@@ -69,22 +69,22 @@ function getApplicableSchedule(schedules, date) {
         .filter(s => s.start)
         .sort((a, b) => new Date(b.start) - new Date(a.start));
 
-    // 1. First try: Find the newest non-empty schedule that starts on or before the date
+    // Find the newest schedule that starts on or before the date.
+    // An empty schedule (all days inactive) is intentional — it means 0 scheduled hours
+    // for that period. We must NOT skip it or fall back to an older schedule.
+    // Normalize schedule start to local date-only to match the loop dates (which are local midnight).
+    // Without this, UTC schedule dates like "2025-08-15T00:00:00Z" compare incorrectly
+    // against local midnight dates in CET/CEST, causing off-by-one errors.
     for (const schedule of sortedSchedules) {
-        const scheduleStart = new Date(schedule.start);
-        if (scheduleStart <= date && isScheduleNotEmpty(schedule)) {
+        const raw = new Date(schedule.start);
+        const scheduleStart = new Date(raw.getFullYear(), raw.getMonth(), raw.getDate());
+        if (scheduleStart <= date) {
             return schedule;
         }
     }
 
-    // 2. Second try: If all schedules starting before are empty, but there are non-empty ones at any time
-    const anyNonEmpty = sortedSchedules.find(s => isScheduleNotEmpty(s));
-    if (anyNonEmpty) {
-        return anyNonEmpty;
-    }
-
-    // Fallback: Just use the most recent one even if empty
-    return sortedSchedules[0] || null;
+    // No schedule starts on or before this date
+    return null;
 }
 
 /**
