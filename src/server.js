@@ -22,6 +22,7 @@ const { getHolidays, getHolidaysByMonth } = require('./api/endpoints/holidays');
 // Services
 const { generateMonthlySummary, getUserMonthlySummary } = require('./services/dataTransformer');
 const { getAnnualSummary } = require('./api/endpoints/powerbi');
+const { getProjectAnalysis } = require('./api/endpoints/projectAnalysis');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -128,6 +129,7 @@ app.get('/api/monthly-summary/:userId', async (req, res) => {
 // ============================================
 
 app.get('/api/powerbi/annual-summary', getAnnualSummary);
+app.get('/api/powerbi/project-breakdown', getProjectAnalysis);
 
 // ============================================
 // Debug Endpoints (for development/testing)
